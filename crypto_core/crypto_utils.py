@@ -41,7 +41,32 @@ def verify_signature(public_key, identity_hash, signature_hex):
         signature = bytes.fromhex(signature_hex)
         public_key.verify(signature, identity_hash.encode())
         return True
-    except BadSignatureError:
+    except (BadSignatureError, ValueError):
+        return False
+
+
+def sign_verification_message(private_key, identity_hash, nonce, request_id):
+    try:
+        from middleware.replay_protection import hash_verification_message
+    except ImportError:
+        from replay_protection import hash_verification_message
+
+    message_hash = hash_verification_message(identity_hash, nonce, request_id)
+    return private_key.sign(message_hash.encode("utf-8")).hex()
+
+
+def verify_verification_signature(public_key, identity_hash, nonce, request_id, signature_hex):
+    try:
+        from middleware.replay_protection import hash_verification_message
+    except ImportError:
+        from replay_protection import hash_verification_message
+
+    try:
+        signature = bytes.fromhex(signature_hex)
+        message_hash = hash_verification_message(identity_hash, nonce, request_id)
+        public_key.verify(signature, message_hash.encode("utf-8"))
+        return True
+    except (BadSignatureError, ValueError):
         return False
 
 # ─────────────────────────────────────────

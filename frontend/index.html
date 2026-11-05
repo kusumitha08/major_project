@@ -586,7 +586,21 @@
         .prerequisites li { grid-template-columns: 20px 1fr; }
         .prerequisites li::before { content: '✓'; width: auto; height: auto; background: none; color: #287d72; font-weight: 800; }
         .register-card { min-width: 0; }
-        .how-works-box { margin: 0; padding: 18px; background: #fffdf8; border: 1px solid #d9dfd9; border-top: 4px solid #e0a52f; border-radius: 4px; box-shadow: 0 8px 22px rgba(23,34,31,.06); }
+        .pin-reset-link { display: inline-block; margin: -8px 0 18px; padding: 0; border: 0; background: none; color: #287d72; font: inherit; text-decoration: underline; cursor: pointer; }
+        .pin-reset-panel { margin: 2px 0 20px; padding: 16px; border: 1px solid #cfd8d2; border-radius: 4px; background: rgba(40,125,114,.04); }
+        .pin-reset-panel [hidden] { display: none !important; }
+        .pin-reset-message { min-height: 1.4em; margin-bottom: 12px; color: #53645c; font-size: .85rem; }
+        .pin-reset-message.error { color: #b42318; }
+        .pin-reset-secondary { margin: 8px 0 0; padding: 0; border: 0; background: none; color: #287d72; font: inherit; text-decoration: underline; cursor: pointer; }
+        .pin-reset-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+                .pin-reset-link { display: inline-block; margin: -8px 0 18px; padding: 0; border: 0; background: none; color: #287d72; font: inherit; text-decoration: underline; cursor: pointer; }
+                .pin-reset-panel { margin: 2px 0 20px; padding: 16px; border: 1px solid #cfd8d2; border-radius: 4px; background: rgba(40,125,114,.04); }
+                .pin-reset-panel [hidden] { display: none !important; }
+                .pin-reset-message { min-height: 1.4em; margin-bottom: 12px; color: #53645c; font-size: .85rem; }
+                .pin-reset-message.error { color: #b42318; }
+                .pin-reset-secondary { margin: 8px 0 0; padding: 0; border: 0; background: none; color: #287d72; font: inherit; text-decoration: underline; cursor: pointer; }
+                .pin-reset-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+            .how-works-box { margin: 0; padding: 18px; background: #fffdf8; border: 1px solid #d9dfd9; border-top: 4px solid #e0a52f; border-radius: 4px; box-shadow: 0 8px 22px rgba(23,34,31,.06); }
         .how-works-box h3 { margin: 0 0 12px; color: #17221f; font: 700 1.08rem Georgia, 'Times New Roman', serif; }
         .how-works-box ol { display: grid; gap: 5px; margin: 0; padding-left: 20px; color: #53645c; font-size: .82rem; line-height: 1.45; }
         .guidance-action { width: 100%; margin-top: 16px; padding: 10px 12px; border: 1px solid #287d72; border-radius: 4px; background: #e3f0eb; color: #287d72; font: 700 .78rem 'Trebuchet MS', 'Segoe UI', sans-serif; cursor: pointer; text-align: left; }
@@ -892,7 +906,7 @@
             <div class="form-group">
                 <label for="regMobile">Mobile Number</label>
                 <input type="text" id="regMobile" placeholder="e.g. 9876543210" />
-                <div class="form-hint">Format: 10 digits</div>
+                <div class="form-hint">Use 10 digits or an international number with country code.</div>
             </div>
             <label class="consent-row" for="regConsent">
                 <input type="checkbox" id="regConsent" />
@@ -944,8 +958,46 @@
                 <div class="form-hint" id="appHint">Format: 4 digits-4 digits-4 digits</div>
             </div>
             <div class="form-group">
-                <label for="appPin">Registered 4-digit PIN</label>
+                <label for="appPin">PIN</label>
                 <input type="password" id="appPin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="off" placeholder="Enter your registration PIN" />
+            </div>
+            <button type="button" class="pin-reset-link" onclick="openPinReset()">Forgot PIN?</button>
+            <div class="pin-reset-panel" id="pinResetPanel" hidden>
+                <div class="pin-reset-message" id="pinResetMessage" role="status" aria-live="polite"></div>
+                <div id="pinResetRequestStep">
+                    <div class="form-group">
+                        <label for="pinResetEmail">Registered email address</label>
+                        <input type="email" id="pinResetEmail" autocomplete="email" placeholder="name@example.com" />
+                    </div>
+                    <button type="button" class="btn" id="pinResetRequestButton" onclick="requestPinResetOtp()">Send OTP</button>
+                </div>
+                <div id="pinResetOtpStep" hidden>
+                    <p>Enter the OTP sent to your email address</p>
+                    <div class="form-group">
+                        <label for="pinResetOtp">One-time password</label>
+                        <input type="text" id="pinResetOtp" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="6-digit OTP" />
+                    </div>
+                    <div class="pin-reset-actions">
+                        <button type="button" class="btn" id="pinResetVerifyButton" onclick="verifyPinResetOtp()">Verify OTP</button>
+                        <button type="button" class="pin-reset-secondary" id="pinResetResendButton" onclick="resendPinResetOtp()" disabled>Resend OTP in 60s</button>
+                    </div>
+                </div>
+                <div id="pinResetNewPinStep" hidden>
+                    <div class="form-group">
+                        <label for="pinResetNewPin">New PIN</label>
+                        <input type="password" id="pinResetNewPin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="new-password" placeholder="Enter new 4-digit PIN" />
+                    </div>
+                    <div class="form-group">
+                        <label for="pinResetConfirmPin">Confirm New PIN</label>
+                        <input type="password" id="pinResetConfirmPin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="new-password" placeholder="Confirm new 4-digit PIN" />
+                    </div>
+                    <button type="button" class="btn" id="pinResetCompleteButton" onclick="completePinReset()">Reset PIN</button>
+                </div>
+                <div id="pinResetSuccessStep" hidden>
+                    <p>PIN reset successfully.</p>
+                    <button type="button" class="btn" onclick="hidePinReset(); document.getElementById('appPin').focus();">Return to Passport Apply</button>
+                </div>
+                <button type="button" class="pin-reset-secondary" id="pinResetCancelButton" onclick="hidePinReset()">Cancel</button>
             </div>
             <section class="identity-check" aria-labelledby="identityCheckTitle">
                 <h3 id="identityCheckTitle">Verify your identity</h3>
@@ -1026,6 +1078,8 @@
     let applicationIdentityVerified = false;
     let rejectedApplicationAttempt = null;
     let currentUser = null;
+    let pinResetFlowId = null;
+    let pinResetResendInterval = null;
 
     function apiFetch(path, options = {}) {
         return fetch(`${API}${path}`, { ...options, credentials: "include" });
@@ -1404,11 +1458,12 @@
         const dob = document.getElementById("regDob").value.trim();
         const aadhaar = document.getElementById("regAadhaar").value.trim();
         const pin = document.getElementById("regPin").value;
+        const mobile = document.getElementById("regMobile").value.trim();
         const btn = document.getElementById("regBtn");
         const resBox = document.getElementById("regResult");
 
-        if (!name || !dob || !aadhaar || !/^\d{4}$/.test(pin)) {
-            alert("Please fill in all fields and set a 4-digit PIN.");
+        if (!name || !dob || !aadhaar || !mobile || !/^\d{4}$/.test(pin)) {
+            alert("Please fill in all fields, including a registered mobile number, and set a 4-digit PIN.");
             return;
         }
         btn.disabled = true;
@@ -1418,7 +1473,7 @@
             const res = await apiFetch(`/aadhaar/register`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ name, dob, aadhaar_id: aadhaar, pin })
+                body: JSON.stringify({ name, dob, aadhaar_id: aadhaar, pin, mobile })
             });
             const data = await res.json();
             resBox.className = "result show " + (res.ok ? "success" : "error");
@@ -1442,6 +1497,167 @@
         } finally {
             btn.disabled = !document.getElementById("regConsent").checked;
             btn.textContent = "Submit Registration";
+        }
+    }
+
+    function setPinResetStep(step) {
+        for (const name of ["Request", "Otp", "NewPin", "Success"]) {
+            document.getElementById(`pinReset${name}Step`).hidden = name !== step;
+        }
+        document.getElementById("pinResetCancelButton").hidden = step === "Success";
+    }
+
+    function setPinResetMessage(message, isError = false) {
+        const messageBox = document.getElementById("pinResetMessage");
+        messageBox.textContent = message;
+        messageBox.classList.toggle("error", isError);
+    }
+
+    function openPinReset() {
+        pinResetFlowId = null;
+        clearInterval(pinResetResendInterval);
+        document.getElementById("pinResetPanel").hidden = false;
+        document.getElementById("pinResetEmail").value = "";
+        document.getElementById("pinResetOtp").value = "";
+        document.getElementById("pinResetNewPin").value = "";
+        document.getElementById("pinResetConfirmPin").value = "";
+        setPinResetMessage("");
+        setPinResetStep("Request");
+        document.getElementById("pinResetEmail").focus();
+    }
+
+    function hidePinReset() {
+        clearInterval(pinResetResendInterval);
+        pinResetFlowId = null;
+        document.getElementById("pinResetOtp").value = "";
+        document.getElementById("pinResetNewPin").value = "";
+        document.getElementById("pinResetConfirmPin").value = "";
+        document.getElementById("pinResetPanel").hidden = true;
+    }
+
+    function startPinResetResendCountdown() {
+        clearInterval(pinResetResendInterval);
+        const button = document.getElementById("pinResetResendButton");
+        let secondsRemaining = 60;
+        button.disabled = true;
+        button.textContent = `Resend OTP in ${secondsRemaining}s`;
+        pinResetResendInterval = setInterval(() => {
+            secondsRemaining -= 1;
+            button.disabled = secondsRemaining > 0;
+            button.textContent = secondsRemaining > 0 ? `Resend OTP in ${secondsRemaining}s` : "Resend OTP";
+            if (secondsRemaining <= 0) clearInterval(pinResetResendInterval);
+        }, 1000);
+    }
+
+    async function requestPinResetOtp() {
+        const email = document.getElementById("pinResetEmail").value.trim();
+        if (!email) {
+            setPinResetMessage("Enter your registered email address.", true);
+            return;
+        }
+        const button = document.getElementById("pinResetRequestButton");
+        button.disabled = true;
+        setPinResetMessage("");
+        try {
+            const response = await apiFetch("/pin-reset/request", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email })
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || "Could not request an OTP.");
+            pinResetFlowId = data.flow_id;
+            setPinResetStep("Otp");
+            setPinResetMessage(data.message || "If the email matches a registered applicant, an OTP has been sent.");
+            startPinResetResendCountdown();
+            document.getElementById("pinResetOtp").focus();
+        } catch (error) {
+            setPinResetMessage(error.message, true);
+        } finally {
+            button.disabled = false;
+        }
+    }
+
+    async function resendPinResetOtp() {
+        const button = document.getElementById("pinResetResendButton");
+        button.disabled = true;
+        try {
+            const response = await apiFetch("/pin-reset/resend", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ flow_id: pinResetFlowId })
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || "Could not resend the OTP.");
+            setPinResetMessage(data.message || "If the request is valid, a new OTP has been sent.");
+            startPinResetResendCountdown();
+        } catch (error) {
+            setPinResetMessage(error.message, true);
+            button.disabled = false;
+        }
+    }
+
+    async function verifyPinResetOtp() {
+        const otp = document.getElementById("pinResetOtp").value.trim();
+        if (!/^\d{6}$/.test(otp)) {
+            setPinResetMessage("Enter the 6-digit OTP.", true);
+            return;
+        }
+        const button = document.getElementById("pinResetVerifyButton");
+        button.disabled = true;
+        setPinResetMessage("");
+        try {
+            const response = await apiFetch("/pin-reset/verify", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ flow_id: pinResetFlowId, otp })
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || "OTP verification failed.");
+            clearInterval(pinResetResendInterval);
+            document.getElementById("pinResetOtp").value = "";
+            setPinResetStep("NewPin");
+            setPinResetMessage("");
+            document.getElementById("pinResetNewPin").focus();
+        } catch (error) {
+            setPinResetMessage(error.message, true);
+        } finally {
+            button.disabled = false;
+        }
+    }
+
+    async function completePinReset() {
+        const pin = document.getElementById("pinResetNewPin").value;
+        const confirmation = document.getElementById("pinResetConfirmPin").value;
+        if (!/^\d{4}$/.test(pin)) {
+            setPinResetMessage("New PIN must be exactly 4 digits.", true);
+            return;
+        }
+        if (pin !== confirmation) {
+            setPinResetMessage("The PINs do not match.", true);
+            return;
+        }
+        const button = document.getElementById("pinResetCompleteButton");
+        button.disabled = true;
+        setPinResetMessage("");
+        try {
+            const response = await apiFetch("/pin-reset/complete", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ flow_id: pinResetFlowId, new_pin: pin })
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || "Could not reset the PIN.");
+            clearInterval(pinResetResendInterval);
+            pinResetFlowId = null;
+            document.getElementById("pinResetNewPin").value = "";
+            document.getElementById("pinResetConfirmPin").value = "";
+            setPinResetStep("Success");
+            setPinResetMessage("");
+        } catch (error) {
+            setPinResetMessage(error.message, true);
+        } finally {
+            button.disabled = false;
         }
     }
 

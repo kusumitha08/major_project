@@ -56,6 +56,12 @@ A privacy-preserving cross-blockchain authentication framework that:
 - Eliminates relay bridges reducing attack surface
 - Provides immutable audit trail of all transactions
 
+### Request Replay Protection
+
+Each identity verification now receives a cryptographically random, single-use nonce from the middleware after the existing name and PIN checks succeed. The Aadhaar authority signs a SHA-256 hash of a domain-separated message containing the identity hash, request ID, and nonce. The middleware verifies that signature and consumes the request before returning success. Reused, expired, mismatched, or tampered challenges are rejected.
+
+Nonce state is intentionally kept in the middleware because it protects the short-lived verification exchange and does not require changing or redeploying either existing registry contract. No raw Aadhaar data or private key material is added to blockchain records or API responses.
+
 ---
 
 ## 🏗️ System Architecture
@@ -223,6 +229,18 @@ This automatically:
 - Starts the frontend after Flask is restarted
 
 Applicants create an account from the portal, then sign in to register identities and submit applications. The startup script no longer inserts anonymous sample citizens.
+
+### PIN Reset Email
+
+PIN-reset OTPs are sent to the email address on the applicant account used when registering the Aadhaar record. Configure SMTP credentials in the same terminal before starting the middleware. For Gmail, enable 2-Step Verification and create an App Password; use that App Password here, not your Google account password:
+
+```powershell
+$env:SMTP_USERNAME = "your-address@gmail.com"
+$env:SMTP_PASSWORD = "your-16-character-app-password"
+$env:SMTP_FROM_EMAIL = "your-address@gmail.com"
+```
+
+The default SMTP server is `smtp.gmail.com` on port `587`. `SMTP_HOST` and `SMTP_PORT` can be set to use another SMTP provider. Existing Aadhaar PIN records without an `email` field must be linked to the correct applicant account email before email-based PIN reset can be used.
 
 ### Step 4 — Restart Flask After start.py Asks
 

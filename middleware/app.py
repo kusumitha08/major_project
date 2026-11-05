@@ -1,5 +1,6 @@
 from functools import wraps
 from datetime import datetime
+import asyncio
 import hmac
 import json
 import os
@@ -15,8 +16,22 @@ from web3 import AsyncWeb3
 from web3.providers import AsyncHTTPProvider
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'crypto_core'))
-from crypto_utils import generate_identity_hash, generate_name_hash, sign_identity, verify_signature
+from crypto_utils import (
+    generate_identity_hash,
+    generate_name_hash,
+    sign_identity,
+    sign_verification_message,
+    verify_signature,
+    verify_verification_signature,
+)
 from keys import load_or_generate_keys
+from middleware.replay_protection import ReplayProtection
+try:
+    from .pin_reset import PinResetError, PinResetManager, normalize_mobile
+    from .email_service import is_configured as email_is_configured, send_email
+except ImportError:
+    from pin_reset import PinResetError, PinResetManager, normalize_mobile
+    from email_service import is_configured as email_is_configured, send_email
 
 try:
     from .auth_store import (
@@ -164,6 +179,110 @@ passport_contract = w3.eth.contract(
 # Load shared ECDSA keys
 # ─────────────────────────────────────────
 private_key, public_key = load_or_generate_keys()
+replay_protection = ReplayProtection()
+pin_reset_manager = PinResetManager()
+SMS_DEFAULT_COUNTRY_CODE = os.getenv("SMS_DEFAULT_COUNTRY_CODE", "+91")
+
+
+def find_pin_record_by_email(email):
+    matches = []
+    for aadhaar_id, record in load_aadhaar_pins().items():
+        record_email = str(record.get("email", "")).strip().lower()
+        if record_email and hmac.compare_digest(record_email, email):
+            matches.append((aadhaar_id, record))
+    return matches
+
+
+async def deliver_pin_reset_otp(email, otp):
+    try:
+        await asyncio.to_thread(
+            send_email,
+            email,
+            "IdentiGate PIN reset OTP",
+            f"Your IdentiGate PIN reset OTP is {otp}. It expires in 5 minutes.",
+        )
+    except Exception:
+        return False
+    return True
+
+
+@app.post("/pin-reset/request")
+async def request_pin_reset(request: Request):
+    if not email_is_configured():
+        return JSONResponse({"error": "PIN reset email is not configured on the server"}, status_code=503)
+
+    data = await request.json() or {}
+    email = str(data.get("email", "")).strip().lower()
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+        return JSONResponse({"error": "Enter a valid email address"}, status_code=400)
+
+    matches = find_pin_record_by_email(email)
+    aadhaar_id = matches[0][0] if len(matches) == 1 else None
+    try:
+        flow_id, otp = pin_reset_manager.start(aadhaar_id, email)
+    except PinResetError as error:
+        return JSONResponse({"error": str(error)}, status_code=error.status_code)
+
+    if otp:
+        await deliver_pin_reset_otp(email, otp)
+    return JSONResponse({
+        "success": True,
+        "flow_id": flow_id,
+        "message": "If the email matches a registered applicant, an OTP has been sent.",
+    })
+
+
+@app.post("/pin-reset/resend")
+async def resend_pin_reset_otp(request: Request):
+    if not email_is_configured():
+        return JSONResponse({"error": "PIN reset email is not configured on the server"}, status_code=503)
+
+    data = await request.json() or {}
+    flow_id = str(data.get("flow_id", ""))
+    try:
+        otp = pin_reset_manager.resend(flow_id)
+    except PinResetError as error:
+        return JSONResponse({"error": str(error)}, status_code=error.status_code)
+
+    if otp:
+        email = pin_reset_manager.challenges[flow_id]["recipient"]
+        await deliver_pin_reset_otp(email, otp)
+    return JSONResponse({"success": True, "message": "If the request is valid, a new OTP has been sent."})
+
+
+@app.post("/pin-reset/verify")
+async def verify_pin_reset_otp(request: Request):
+    data = await request.json() or {}
+    flow_id = str(data.get("flow_id", ""))
+    otp = str(data.get("otp", ""))
+    if not re.fullmatch(r"[0-9]{6}", otp):
+        return JSONResponse({"error": "The OTP is invalid or expired"}, status_code=400)
+    try:
+        pin_reset_manager.verify(flow_id, otp)
+    except PinResetError as error:
+        return JSONResponse({"error": str(error)}, status_code=error.status_code)
+    return JSONResponse({"success": True})
+
+
+@app.post("/pin-reset/complete")
+async def complete_pin_reset(request: Request):
+    data = await request.json() or {}
+    flow_id = str(data.get("flow_id", ""))
+    pin = str(data.get("new_pin", ""))
+    if not re.fullmatch(r"[0-9]{4}", pin):
+        return JSONResponse({"error": "PIN must be exactly 4 digits"}, status_code=400)
+    try:
+        aadhaar_id = pin_reset_manager.consume_verified(flow_id)
+    except PinResetError as error:
+        return JSONResponse({"error": str(error)}, status_code=error.status_code)
+
+    pin_records = load_aadhaar_pins()
+    pin_record = pin_records.get(aadhaar_id)
+    if not pin_record:
+        return JSONResponse({"error": "Applicant record was not found"}, status_code=404)
+    pin_record.update(hash_aadhaar_pin(pin))
+    save_aadhaar_pins(pin_records)
+    return JSONResponse({"success": True, "message": "PIN reset successfully."})
 
 
 async def send_transaction(func):
@@ -318,9 +437,13 @@ async def register_citizen(request: Request):
     dob = data.get("dob")
     aadhaar_id = data.get("aadhaar_id")
     pin = str(data.get("pin", ""))
+    try:
+        mobile = normalize_mobile(data.get("mobile"), SMS_DEFAULT_COUNTRY_CODE)
+    except ValueError:
+        return JSONResponse({"error": "A valid registered mobile number is required"}, status_code=400)
 
     if not name or not dob or not aadhaar_id or not re.fullmatch(r"\d{4}", pin):
-        return JSONResponse({"error": "name, dob, aadhaar_id and a 4-digit pin are required"}, status_code=400)
+        return JSONResponse({"error": "name, dob, Aadhaar ID, mobile number and a 4-digit PIN are required"}, status_code=400)
 
     try:
         already = await aadhaar_contract.functions.isRegistered(aadhaar_id).call()
@@ -341,7 +464,13 @@ async def register_citizen(request: Request):
         )
 
         pin_records = load_aadhaar_pins()
-        pin_records[aadhaar_id] = {"name": name, **hash_aadhaar_pin(pin)}
+        user_email = str(request.session["user"].get("email", "")).strip().lower()
+        pin_records[aadhaar_id] = {
+            "name": name,
+            "mobile": mobile,
+            "email": user_email,
+            **hash_aadhaar_pin(pin),
+        }
         save_aadhaar_pins(pin_records)
 
         return JSONResponse({
@@ -435,6 +564,35 @@ async def verify_identity_proof(request: Request, aadhaar_id: str):
         if not pin_record or not verify_aadhaar_pin(pin, pin_record):
             return JSONResponse({"authenticated": False, "error": "PIN does not match the registered Aadhaar identity"}, status_code=401)
 
+        supplied_challenge = any(
+            data.get(field) is not None
+            for field in ("nonce", "request_id", "verification_signature", "identity_hash")
+        )
+        if supplied_challenge:
+            request_id = str(data.get("request_id", ""))
+            nonce = str(data.get("nonce", ""))
+            verification_signature = str(data.get("verification_signature", ""))
+            requested_identity_hash = str(data.get("identity_hash", ""))
+            if not request_id or not nonce or not verification_signature or not requested_identity_hash:
+                return JSONResponse({"authenticated": False, "error": "Complete verification challenge is required"}, status_code=400)
+            if not hmac.compare_digest(requested_identity_hash, identity_hash):
+                return JSONResponse({"authenticated": False, "error": "Identity hash does not match the registered identity"}, status_code=401)
+            valid_nonce, nonce_error = replay_protection.consume(identity_hash, nonce, request_id)
+            if not valid_nonce:
+                return JSONResponse({"authenticated": False, "error": nonce_error}, status_code=401)
+            if not verify_verification_signature(public_key, identity_hash, nonce, request_id, verification_signature):
+                return JSONResponse({"authenticated": False, "error": "Verification signature is invalid"}, status_code=401)
+        else:
+            request_id, nonce, expires_at = replay_protection.issue(identity_hash)
+            verification_signature = sign_verification_message(
+                private_key, identity_hash, nonce, request_id
+            )
+            valid_nonce, nonce_error = replay_protection.consume(identity_hash, nonce, request_id)
+            if not valid_nonce or not verify_verification_signature(
+                public_key, identity_hash, nonce, request_id, verification_signature
+            ):
+                return JSONResponse({"authenticated": False, "error": "Verification challenge could not be authenticated"}, status_code=401)
+
         approved_application = await find_approved_application(aadhaar_id)
 
         return JSONResponse({
@@ -444,6 +602,10 @@ async def verify_identity_proof(request: Request, aadhaar_id: str):
             "aadhaar_id": aadhaar_id,
             "identity_hash": identity_hash,
             "signature": signature,
+            "verification_signature": verification_signature,
+            "nonce": nonce,
+            "request_id": request_id,
+            "nonce_expires_at": expires_at if not supplied_challenge else None,
             "name_hash": name_hash,
             "timestamp": timestamp,
             "block_number": await w3.eth.block_number,
